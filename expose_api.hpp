@@ -170,7 +170,7 @@ namespace mgm {
 
         struct ExposedClasses {
             struct ExposedFunction {
-                std::function<std::any(void*, std::vector<std::any>)> function{};
+                std::function<std::any(void*, std::vector<std::any>&)> function{};
                 
                 struct Signature {
                     std::string traits_and_qualifiers{};
@@ -187,13 +187,13 @@ namespace mgm {
                     std::vector<Argument> arguments{};
                 } signature{};
 
-                ExposedFunction(std::function<std::any(void*, std::vector<std::any>)> init_function = {})
+                ExposedFunction(std::function<std::any(void*, std::vector<std::any>&)> init_function = {})
                     : function{init_function} {}
 
-                std::any operator()(void* object, std::vector<std::any> args) {
+                std::any operator()(void* object, std::vector<std::any>& args) {
                     return function(object, args);
                 }
-                std::any operator()(void* object, std::vector<std::any> args) const {
+                std::any operator()(void* object, std::vector<std::any>& args) const {
                     return function(object, args);
                 }
             };
@@ -285,17 +285,16 @@ namespace mgm {
                 auto& expose_data = ExposeApi::get_exposed_classes();                
                 const size_t class_id = typeid(T).hash_code();
                 auto& new_function = expose_data.class_members[class_id].members[name].emplace_function(typeid(TypeErasedFunctor).hash_code(), ExposedClasses::ExposedFunction{
-                    [function](void* object, std::vector<std::any> args) -> std::any{
+                    [function](void* object, std::vector<std::any>& args) -> std::any{
                         assert(args.size() == sizeof...(Args) && "Invalid number of arguments for function call");
                         if constexpr (sizeof...(Args) != 0) {
-                            size_t i = sizeof...(Args) - 1;
-                            auto get_arg = [&args, &i]<typename Arg>() -> Arg {
-                                return std::any_cast<Arg>(args[i--]);
+                            const auto caller = [&]<size_t... S>(std::index_sequence<S...>) {
+                                if constexpr (!std::is_void_v<ReturnType>)
+                                    return (reinterpret_cast<T*>(object)->*function)(std::any_cast<Args>(args[S])...);
+                                (reinterpret_cast<T*>(object)->*function)(std::any_cast<Args>(args[S])...);
+                                return std::any{};
                             };
-                            if constexpr (!std::is_void_v<ReturnType>)
-                                return std::any((reinterpret_cast<T*>(object)->*function)(std::forward<Args>(get_arg.template operator()<Args>())...));
-                            (reinterpret_cast<T*>(object)->*function)(std::forward<Args>(get_arg.template operator()<Args>())...);
-                            return {};
+                            return caller(std::make_index_sequence<sizeof...(Args)>{});
                         }
                         else {
                             if constexpr (!std::is_void_v<ReturnType>)
@@ -380,7 +379,10 @@ namespace mgm {
                 if (!member.has_value || !member.is_function)
                     throw std::runtime_error("Member is not a function");
                 auto func = member.functions->at(typeid(ReturnType(Args...)).hash_code());
-                auto res = func(object, {std::forward<Args>(args)...});
+                std::vector<std::any> arguments{};
+                arguments.reserve(sizeof...(Args));
+                (arguments.emplace_back<Args>(std::forward<Args>(args)), ...);
+                auto res = func(object, arguments);
                 if constexpr (!std::is_same_v<ReturnType, void>)
                     return std::any_cast<ReturnType>(res);
             }
@@ -390,9 +392,31 @@ namespace mgm {
                 if (!member.has_value || !member.is_function)
                     throw std::runtime_error("Member is not a function");
                 const auto func = member.functions->at(typeid(ReturnType(Args...)).hash_code());
-                const auto res = func(object, {std::forward<Args>(args)...});
+                std::vector<std::any> arguments{};
+                arguments.reserve(sizeof...(Args));
+                (arguments.emplace_back<Args>(args), ...);
+                const auto res = func(object, arguments);
                 if constexpr (!std::is_same_v<ReturnType, void>)
                     return std::any_cast<ReturnType>(res);
+            }
+
+            std::any call_generic(const std::vector<std::any>& args) {
+                if (!member.has_value || !member.is_function)
+                    throw std::runtime_error("Member is not a function");
+                for (const auto& func : *member.functions) {
+                    if (func.second.signature.arguments.size() != args.size())
+                        continue;
+                    bool match = true;
+                    for (size_t i = 0; i < args.size(); i++) {
+                        if (func.second.signature.arguments[i].type_id != args[i].type().hash_code()) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match)
+                        return func.second(object, const_cast<std::vector<std::any>&>(args));
+                }
+                throw std::runtime_error("No matching function found");
             }
 
             template<typename M>
