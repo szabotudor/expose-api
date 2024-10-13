@@ -112,3 +112,9 @@ int main() {
     return 0;
 }
 ```
+
+### Plans for the future:
+- [ ] Multithreading support
+- [ ] Options and tags for members (description, category, etc.)
+- [ ] Exposing virtual functions
+- [ ] Lower overhead
