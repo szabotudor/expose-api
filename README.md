@@ -24,7 +24,7 @@ public:
     EXPOSE_CLASS("Foo")
 
     // Declare a function member with the reflection system, that accepts two integers
-    void MFUNC(function)(int a, int b);
+    void MFUNC(function)(int a, float b);
 
     // Declare a different function, that returns an int
     int MFUNC(sum)();
@@ -38,9 +38,9 @@ public:
 };
 
 // Definition for the first reflected function
-void Foo::function(int a, int b) {
+void Foo::function(int a, float b) {
     x = a;
-    y = b;
+    y = (int)b;
 }
 
 // Definition for the second reflected function
@@ -64,7 +64,8 @@ int main() {
     // Check if the member is a function
     if (function.is_function()) {
         // Set x to 13 and y to 17
-        function.call(13, 17);
+        // The types need to be correct, because the api cannot deduce them automatically, so make sure to pass the correct types
+        function.call(13, 17.0f);
     }
 
     // Get a variable member (same as a function)
