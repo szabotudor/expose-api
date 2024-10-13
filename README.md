@@ -27,7 +27,7 @@ public:
     void MFUNC(function)(int a, float b);
 
     // Declare a different function, that returns an int
-    int MFUNC(sum)();
+    int MFUNC_CONST(sum)();
 
     // Declare 2 variable members
     int MVAR(x);
@@ -44,7 +44,7 @@ void Foo::function(int a, float b) {
 }
 
 // Definition for the second reflected function
-int Foo::sum() {
+int Foo::sum() const {
     return x + y;
 }
 
@@ -78,7 +78,8 @@ int main() {
     }
 
     // Get another function member
-    auto sum = foo_runtime->get_member("sum");
+    // This one can be marked const, because the original function is also const
+    const auto sum = foo_runtime->get_member("sum");
 
     if (sum.is_function()) {
         // Get the sum of x and y
