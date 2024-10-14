@@ -96,6 +96,9 @@ int main() {
     // The original class is affected by changes made through the reflection system
     // After changing both x and y to 0, the result should be 0
     std::cout << "The sum of x and y is: " << result << std::endl;
+
+    // You can also get the name of the type through the reflection system
+    std::cout << "The type name of the instance is: " << foo_runtime->get_type_name() << std::endl;
     
     return 0;
 }
