@@ -4,4 +4,4 @@ project(ExposeApi)
 
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(ExposeApi main.cpp expose_api.hpp)
+add_executable(ExposeApi example.cpp expose_api.hpp)
