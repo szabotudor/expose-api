@@ -3,9 +3,9 @@ A modern C++ single-header library for static and runtime reflection of class me
 
 The library is mainly tested  on GCC and Clang, using C++20, but C++17 works as well, though it is not officially supported.
 
-MSVC and other compilers are not officially supported. As of writing, the library compiles, but it's not guaranteed that new version will continue to work.
+MSVC and other compilers are not officially supported. As of writing, the library compiles and runs well on MSVC, and I am trying to keep it working, but it's not guaranteed that new version will continue to support that compiler.
 
-The example in main.cpp shows how to use the reflection system to access class members, without knowing the type of the instance.
+The example in example.cpp shows how to use the reflection system to access class members, without knowing the type of the instance.
 
 All you need to know is in the example, the library is plug-and-play. Just include the header and start using the reflection system.
 
