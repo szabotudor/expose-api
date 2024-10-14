@@ -237,8 +237,6 @@ namespace mgm {
                     is_function = false;
                     has_value = false;
                 }
-
-                ~ExposedMember() {}
             };
             struct ExposedClassMembers {
                 std::unordered_map<std::string, ExposedMember> members{};
@@ -290,22 +288,23 @@ namespace mgm {
                 using TypeErasedFunctor = ReturnType(Args...);
                 auto& expose_data = ExposeApi::get_exposed_classes();                
                 const size_t class_id = typeid(T).hash_code();
-                auto& new_function = expose_data.class_members[class_id].members[name].emplace_function(typeid(TypeErasedFunctor).hash_code(), ExposedClasses::ExposedFunction{
+                expose_data.class_members[class_id].members[name].emplace_function(typeid(TypeErasedFunctor).hash_code(), ExposedClasses::ExposedFunction{
                     .function = [function](void* object, std::vector<std::any>& args) -> std::any{
                         assert(args.size() == sizeof...(Args) && "Invalid number of arguments for function call");
+                        T* const t = static_cast<T*>(object);
                         if constexpr (sizeof...(Args) != 0) {
                             const auto caller = [&]<size_t... S>(std::index_sequence<S...>) {
                                 if constexpr (!std::is_void_v<ReturnType>)
-                                    return (reinterpret_cast<T*>(object)->*function)(std::any_cast<Args>(args[S])...);
-                                (reinterpret_cast<T*>(object)->*function)(std::any_cast<Args>(args[S])...);
+                                    return (t->*function)(std::any_cast<Args>(args[S])...);
+                                (t->*function)(std::any_cast<Args>(args[S])...);
                                 return std::any{};
                             };
                             return caller(std::make_index_sequence<sizeof...(Args)>{});
                         }
                         else {
                             if constexpr (!std::is_void_v<ReturnType>)
-                                return std::any((reinterpret_cast<T*>(object)->*function)());
-                            (reinterpret_cast<T*>(object)->*function)();
+                                return std::any((t->*function)());
+                            (t->*function)();
                             return {};
                         }
                     },
@@ -317,15 +316,19 @@ namespace mgm {
                     },
                     .is_const = is_const
                 });
-                expose_data.class_members[class_id].args_queue.push(ExposedClasses::ExposedClassMembers::NextFunction{
-                    .name = name,
-                    .type_id = typeid(TypeErasedFunctor).hash_code()
-                });
+                if constexpr (sizeof...(Args) != 0)
+                    expose_data.class_members[class_id].args_queue.push(ExposedClasses::ExposedClassMembers::NextFunction{
+                        .name = name,
+                        .type_id = typeid(TypeErasedFunctor).hash_code()
+                    });
                 return true;
             }
 
             template<typename... Args>
             static bool expose_args(void (*)(Args...), const std::vector<std::string>& types_and_names) {
+                if (types_and_names.empty())
+                    return false;
+
                 auto& expose_data = ExposeApi::get_exposed_classes();
                 const auto class_id = typeid(T).hash_code();
                 const auto& member_to_expose = expose_data.class_members[class_id].args_queue.top();
@@ -496,44 +499,37 @@ namespace mgm {
             bool is_variable() const { return !member.is_function; }
         };
 
-        #define MAKE_GET_MEMBER_FUNCTION(this_type, func_name, _pre) \
-        _pre AutoExposedMemberFinder func_name(const std::string& name) const { \
-            auto& expose_data = ExposeApi::get_exposed_classes(); \
-            const auto type_id = get_class_id(this); \
-            const auto offset = expose_data.class_members[type_id].runtime_offset; \
-            const auto _this = reinterpret_cast<uintptr_t>(this) - offset; \
-            return { reinterpret_cast<void*>(_this), expose_data.class_members[type_id].members[name], true }; \
-        } \
-        _pre AutoExposedMemberFinder func_name(const std::string& name) { \
-            auto res = const_cast<const this_type*>(this)->func_name(name); \
-            res.from_const = false; \
-            return res; \
-        };
-        MAKE_GET_MEMBER_FUNCTION(ExposeApiRuntime, get_member, virtual)
-
-        #define MAKE_GET_ALL_MEMBERS_FUNCTION(this_type, func_name, _pre) \
-        _pre std::unordered_multimap<std::string, AutoExposedMemberFinder> func_name() const { \
-            std::unordered_multimap<std::string, AutoExposedMemberFinder> members{}; \
-            auto& expose_data = ExposeApi::get_exposed_classes(); \
-            const auto type_id = get_class_id(this); \
-            \
-            for (const auto& [name, member] : expose_data.class_members[type_id].members) { \
-                if (name == "_expose_api_member_offset_initializer") \
-                    continue; \
-                const auto offset = expose_data.class_members[type_id].runtime_offset; \
-                const auto _this = reinterpret_cast<uintptr_t>(this) - offset; \
-                members.emplace(name, AutoExposedMemberFinder{ reinterpret_cast<void*>(_this), member }); \
-            } \
-            \
-            return members; \
-        } \
-        _pre std::unordered_multimap<std::string, AutoExposedMemberFinder> func_name() { \
-            auto res = const_cast<const this_type*>(this)->func_name(); \
-            for (auto& [name, member] : res) \
-                member.from_const = false; \
-            return res; \
+        virtual AutoExposedMemberFinder get_member(const std::string& name) const {
+            auto& expose_data = ExposeApi::get_exposed_classes();
+            const auto type_id = get_class_id(this);
+            const auto object = reinterpret_cast<uint8_t*>(const_cast<ExposeApiRuntime*>(this)) - expose_data.class_members[type_id].runtime_offset;
+            return {static_cast<void*>(object), expose_data.class_members[type_id].members[name], true};
         }
-        MAKE_GET_ALL_MEMBERS_FUNCTION(ExposeApiRuntime, get_all_members, virtual)
+        virtual AutoExposedMemberFinder get_member(const std::string& name) {
+            auto res = const_cast<const ExposeApiRuntime*>(this)->get_member(name);
+            res.from_const = false;
+            return res;
+        }
+
+        virtual std::unordered_multimap<std::string, AutoExposedMemberFinder> get_all_members() const {
+            std::unordered_multimap<std::string, AutoExposedMemberFinder> members{};
+            auto& expose_data = ExposeApi::get_exposed_classes();
+            const auto type_id = get_class_id(this);
+            const auto object = reinterpret_cast<uint8_t*>(const_cast<ExposeApiRuntime*>(this)) - expose_data.class_members[type_id].runtime_offset;
+            for (const auto& [name, member] : expose_data.class_members[type_id].members)
+            {
+                if (name == "_expose_api_member_offset_initializer")
+                    continue;
+                members.emplace(name, AutoExposedMemberFinder{static_cast<void*>(object), expose_data.class_members[type_id].members[name], true});
+            }
+            return members;
+        }
+        virtual std::unordered_multimap<std::string, AutoExposedMemberFinder> get_all_members() {
+            auto res = const_cast<const ExposeApiRuntime*>(this)->get_all_members();
+            for (auto& [name, member] : res)
+                member.from_const = false;
+            return res;
+        }
 
         virtual ~ExposeApiRuntime() = default;
     };
@@ -542,26 +538,22 @@ namespace mgm {
     ExposeApi::ExposedClassAnalyzer<T>::ExposedClassAnalyzer() {
         const T* t = nullptr;
         const auto offset = reinterpret_cast<uintptr_t>(&t->_expose_api_analyzer);
-#if !defined(_MSVC_LANG)
-        assert(offset == 0 && "Class must not have any members before using the EXPOSE_CLASS() macro");
-#else
-        if constexpr (std::is_base_of_v<ExposeApiRuntime, T>)
-            assert(offset == sizeof(uintptr_t) && "Class must not have any members before using the EXPOSE_CLASS() macro");
-        else
-            assert(offset == 0 && "Class must not have any members before using the EXPOSE_CLASS() macro");
-#endif
 
         const auto _object = reinterpret_cast<const uint8_t*>(this);
         const auto object = reinterpret_cast<const T*>(_object - offset);
-        ExposeApiRuntime::AutoExposedMemberFinder empty_member = object->static_get_member("_expose_api_member_offset_initializer");
+        ExposeApiRuntime::AutoExposedMemberFinder empty_member{nullptr, {}};
+        if constexpr (std::is_base_of_v<ExposeApiRuntime, T>)
+            empty_member = object->get_member("_expose_api_member_offset_initializer");
+        else
+            empty_member = object->static_get_member("_expose_api_member_offset_initializer");
         const auto real_offset = reinterpret_cast<uintptr_t>(empty_member.object) - reinterpret_cast<uintptr_t>(object);
         ExposeApi::get_exposed_classes().class_members[typeid(T).hash_code()].runtime_offset = real_offset;
     }
 
-    #define _STR2(x) #x
-    #define _STR(x) _STR2(x)
-    #define _CAT2(a, b) a##b
-    #define _CAT(a, b) _CAT2(a, b)
+    #define MSTR2(x) #x
+    #define MSTR(x) MSTR2(x)
+    #define MCAT2(a, b) a##b
+    #define MCAT(a, b) MCAT2(a, b)
 
 
     #define MAKE_MAYBE_UNUSED(a) [[maybe_unused]] a
@@ -582,8 +574,8 @@ namespace mgm {
 #endif
 
     #define _MARGS(...) \
-        static inline void _CAT(_expose_api_temp_function, __LINE__) MAKE_ARGS_TEMP_FUNC(__VA_ARGS__) {} \
-        static inline const bool _CAT(_expose_api_args_helper_, __LINE__) = mgm::ExposeApi::ExposedClassAnalyzer<_ExposeApi_Self>::expose_args(&_ExposeApi_Self::_CAT(_expose_api_temp_function, __LINE__), {FOR_EACH(_STR, __VA_ARGS__)})
+        static inline void MCAT(_expose_api_temp_function, __LINE__) MAKE_ARGS_TEMP_FUNC(__VA_ARGS__) {} \
+        static inline const bool MCAT(_expose_api_args_helper_, __LINE__) = mgm::ExposeApi::ExposedClassAnalyzer<_ExposeApi_Self>::expose_args(&_ExposeApi_Self::MCAT(_expose_api_temp_function, __LINE__), {FOR_EACH(MSTR, __VA_ARGS__)})
 
     #define MFUNC_SIMPLE(member, is_const, is_volatile, ...) \
         static inline* const _expose_api_return_type_##member{}; \
@@ -615,9 +607,33 @@ namespace mgm {
     #define EXPOSE_CLASS(class_name) \
         DEFINE_SELF_WITH_NAME(_ExposeApi_Self) \
         [[no_unique_address]] mgm::ExposeApi::ExposedClassAnalyzer<_ExposeApi_Self> _expose_api_analyzer{}; \
-        \
-        MAKE_GET_MEMBER_FUNCTION(_ExposeApi_Self, static_get_member, ) \
-        MAKE_GET_ALL_MEMBERS_FUNCTION(_ExposeApi_Self, static_get_all_members, ) \
+        ExposeApiRuntime::AutoExposedMemberFinder static_get_member(const std::string& name) const { \
+            auto& expose_data = ExposeApi::get_exposed_classes(); \
+            const auto type_id = typeid(*this).hash_code(); \
+            return {static_cast<void*>(const_cast<_ExposeApi_Self*>(this)), expose_data.class_members[type_id].members[name], true}; \
+        } \
+        ExposeApiRuntime::AutoExposedMemberFinder static_get_member(const std::string& name) { \
+            auto res = const_cast<const _ExposeApi_Self*>(this)->static_get_member(name); \
+            res.from_const = false; \
+            return res; \
+        } \
+        std::unordered_multimap<std::string, ExposeApiRuntime::AutoExposedMemberFinder> static_get_all_members() const { \
+            std::unordered_multimap<std::string, ExposeApiRuntime::AutoExposedMemberFinder> members{}; \
+            auto& expose_data = ExposeApi::get_exposed_classes(); \
+            const auto type_id = typeid(*this).hash_code(); \
+            for (const auto& [name, member] : expose_data.class_members[type_id].members) { \
+                if (name == "_expose_api_member_offset_initializer") \
+                    continue; \
+                members.emplace(name, ExposeApiRuntime::AutoExposedMemberFinder{static_cast<void*>(const_cast<_ExposeApi_Self*>(this)), member, true}); \
+            } \
+            return members; \
+        } \
+        std::unordered_multimap<std::string, ExposeApiRuntime::AutoExposedMemberFinder> static_get_all_members() { \
+            auto res = const_cast<const _ExposeApi_Self*>(this)->static_get_all_members(); \
+            for (auto& [name, member] : res) \
+                member.from_const = false; \
+            return res; \
+        } \
         \
         static inline mgm::ExposeApi _expose_api_class_auto_initializer{mgm::ExposeApi::expose_class<_ExposeApi_Self>(class_name)}; \
         \
