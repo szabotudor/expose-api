@@ -5,6 +5,7 @@
 #include <queue>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <any>
@@ -531,6 +532,12 @@ namespace mgm {
             return res;
         }
 
+        virtual std::string get_type_name() const {
+            auto& expose_data = ExposeApi::get_exposed_classes();
+            const auto type_id = get_class_id(this);
+            return expose_data.class_names[type_id];
+        }
+
         virtual ~ExposeApiRuntime() = default;
     };
 
@@ -549,6 +556,22 @@ namespace mgm {
         const auto real_offset = reinterpret_cast<uintptr_t>(empty_member.object) - reinterpret_cast<uintptr_t>(object);
         ExposeApi::get_exposed_classes().class_members[typeid(T).hash_code()].runtime_offset = real_offset;
     }
+
+    template <typename T>
+    class HasExposeApi
+    {
+    private:
+        template <typename U>
+        static auto test(int) -> decltype(&U::static_get_member, std::true_type{});
+
+        template <typename>
+        static std::false_type test(...);
+
+    public:
+        static constexpr bool value = decltype(test<T>(0))::value;
+    };
+    template<typename T>
+    constexpr auto HasExposeApi_v = HasExposeApi<T>::value || std::is_same_v<T, ExposeApiRuntime>;
 
     #define MSTR2(x) #x
     #define MSTR(x) MSTR2(x)
@@ -633,6 +656,12 @@ namespace mgm {
             for (auto& [name, member] : res) \
                 member.from_const = false; \
             return res; \
+        } \
+        \
+        static std::string static_get_type_name() { \
+            auto& expose_data = ExposeApi::get_exposed_classes(); \
+            const auto type_id = typeid(_ExposeApi_Self).hash_code(); \
+            return expose_data.class_names[type_id]; \
         } \
         \
         static inline mgm::ExposeApi _expose_api_class_auto_initializer{mgm::ExposeApi::expose_class<_ExposeApi_Self>(class_name)}; \
